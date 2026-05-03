@@ -20,33 +20,32 @@
     function hideStatus() {
       if (!statusEl) return;
       statusEl.style.transition = "opacity 0.6s";
-      statusEl.style.opacity = "0";
+      statusEl.style.opacity    = "0";
       setTimeout(function () { statusEl.style.display = "none"; }, 700);
     }
 
     if (!project) { setStatus("Project not found."); return; }
 
     titleEl.textContent = project.name;
-    document.title      = "Glory360 — " + project.name;
+    document.title      = "Glory360 \u2014 " + project.name;
 
     if (!project.scenes.length) {
       setStatus("No scenes yet. Open the editor and add some.");
       return;
     }
-
     if (!window.pannellum) {
       setStatus("Pannellum failed to load. Check internet connection.");
       return;
     }
 
     // ── Build scenes config ──────────────────────────────────────
-    const scenesConf = {};
+    var scenesConf = {};
     project.scenes.forEach(function (scene) {
-      const cfg = G.panoConfig(scene, project, false);
+      var cfg = G.panoConfig(scene, project, false);
       scenesConf[scene.id] = Object.assign({ title: scene.name }, cfg);
     });
 
-    const viewer = pannellum.viewer(panoEl, {
+    var viewer = pannellum.viewer(panoEl, {
       default: { firstScene: project.scenes[0].id, sceneFadeDuration: 700 },
       autoLoad: true,
       showFullscreenCtrl: false,
@@ -63,88 +62,161 @@
         });
       }
       project.scenes.forEach(function (scene) {
-        const b = document.createElement("button");
-        b.className = "snav-btn";
+        var b = document.createElement("button");
+        b.className       = "snav-btn";
         b.dataset.sceneId = scene.id;
-        b.textContent = scene.name;
-        b.onclick = function () { viewer.loadScene(scene.id); updateNav(scene.id); };
+        b.textContent     = scene.name;
+        b.onclick         = function () { viewer.loadScene(scene.id); updateNav(scene.id); };
         navEl.appendChild(b);
       });
       updateNav(project.scenes[0].id);
       viewer.on("scenechange", function (id) { updateNav(id); });
     }
 
-    // ── Gyroscope / Device Orientation ───────────────────────────
-    var gyroActive    = false;
-    var gyroAlpha0    = null;  // initial compass heading (Z axis)
-    var gyroBeta0     = null;  // initial tilt forward/back (X axis)
-    var gyroGamma0    = null;  // initial tilt left/right (Y axis)
-    var gyroRAF       = null;
-    var pendingPitch  = null;
-    var pendingYaw    = null;
-    var lastOrientation = null;
+    // ════════════════════════════════════════════════════════════
+    //  GYROSCOPE MODULE
+    //  Three-layer jitter fix for software-fused sensors
+    //  (MTK G25 / accelerometer+magnetometer fusion devices)
+    //
+    //  Layer 1 — Low-pass EMA filter
+    //    Blends each raw sensor reading with the previous smoothed
+    //    value using alpha. Lower alpha = smoother but more lag.
+    //    alpha = 0.12 chosen for TCL 30 SE portrait use.
+    //
+    //  Layer 2 — Dead zone
+    //    Changes smaller than DEAD_YAW / DEAD_PITCH degrees are
+    //    ignored entirely, stopping magnetometer drift when still.
+    //
+    //  Layer 3 — Velocity damping via rAF loop
+    //    The viewer glides toward the target position each frame
+    //    rather than jumping. EASE controls the blend per frame.
+    //    This removes snapping artefacts during movement.
+    // ════════════════════════════════════════════════════════════
 
-    function onDeviceOrientation(e) {
+    // ── Tuning constants ─────────────────────────────────────────
+    var EMA_ALPHA  = 0.12;   // Layer 1: smoothing strength (0.05=very smooth, 0.3=responsive)
+    var DEAD_YAW   = 0.18;   // Layer 2: yaw dead zone in degrees
+    var DEAD_PITCH = 0.12;   // Layer 2: pitch dead zone in degrees
+    var EASE       = 0.18;   // Layer 3: easing per rAF frame (0=no movement, 1=instant)
+
+    // ── State ────────────────────────────────────────────────────
+    var gyroActive = false;
+    var rafId      = null;
+
+    // Raw sensor baseline (set on first reading after enable)
+    var baseAlpha = null;
+    var baseBeta  = null;
+
+    // EMA smoothed deltas
+    var smoothYaw   = 0;
+    var smoothPitch = 0;
+
+    // Current viewer target (what we're easing toward)
+    var targetYaw   = 0;
+    var targetPitch = 0;
+
+    // ── Layer 1+2: sensor input handler ─────────────────────────
+    function onOrientation(e) {
       if (!gyroActive) return;
-      // alpha = compass 0-360, beta = -180 to 180 (tilt fwd/back), gamma = -90 to 90 (tilt L/R)
-      var alpha = e.alpha || 0;
-      var beta  = e.beta  || 0;
-      var gamma = e.gamma || 0;
 
-      // On first reading, store as baseline
-      if (gyroAlpha0 === null) {
-        gyroAlpha0 = alpha;
-        gyroBeta0  = beta;
-        gyroGamma0 = gamma;
+      var alpha = e.alpha != null ? e.alpha : 0;
+      var beta  = e.beta  != null ? e.beta  : 0;
+
+      // Capture baseline on first valid reading
+      if (baseAlpha === null) {
+        baseAlpha   = alpha;
+        baseBeta    = beta;
+        targetYaw   = viewer.getYaw();
+        targetPitch = viewer.getPitch();
+        smoothYaw   = 0;
+        smoothPitch = 0;
         return;
       }
 
-      // Delta from baseline
-      var dAlpha = alpha - gyroAlpha0;
-      var dBeta  = beta  - gyroBeta0;
+      // Raw deltas from baseline
+      var dAlpha = alpha - baseAlpha;
+      var dBeta  = beta  - baseBeta;
 
-      // Normalise alpha delta to -180..180
+      // Normalise yaw delta to -180..180 range
       if (dAlpha >  180) dAlpha -= 360;
       if (dAlpha < -180) dAlpha += 360;
 
-      // Map to panorama coordinates
-      // Yaw: phone rotating left/right → horizontal pan
-      // Pitch: phone tilting up/down → vertical pan
-      pendingYaw   = viewer.getYaw()   - dAlpha * 0.8;
-      pendingPitch = viewer.getPitch() + dBeta  * 0.5;
+      // LAYER 1 — Exponential moving average (low-pass filter)
+      // New smoothed value = alpha * rawDelta + (1-alpha) * previousSmoothed
+      smoothYaw   = EMA_ALPHA * dAlpha   + (1 - EMA_ALPHA) * smoothYaw;
+      smoothPitch = EMA_ALPHA * dBeta    + (1 - EMA_ALPHA) * smoothPitch;
 
-      // Update baseline incrementally (smooth tracking)
-      gyroAlpha0 = alpha;
-      gyroBeta0  = beta;
+      // LAYER 2 — Dead zone: ignore sub-threshold noise
+      var applyYaw   = Math.abs(smoothYaw)   > DEAD_YAW;
+      var applyPitch = Math.abs(smoothPitch) > DEAD_PITCH;
 
-      // Apply via rAF to avoid janky mid-frame updates
-      if (!gyroRAF) {
-        gyroRAF = requestAnimationFrame(applyGyro);
+      if (applyYaw) {
+        targetYaw = targetYaw - smoothYaw * 0.9;
+      }
+      if (applyPitch) {
+        targetPitch = targetPitch + smoothPitch * 0.6;
+      }
+
+      // Clamp pitch to safe range
+      targetPitch = Math.max(-85, Math.min(85, targetPitch));
+
+      // Advance baseline incrementally so large fast rotations
+      // don't accumulate unbounded deltas
+      baseAlpha = alpha;
+      baseBeta  = beta;
+    }
+
+    // ── Layer 3: rAF easing loop ─────────────────────────────────
+    function easingLoop() {
+      if (!gyroActive) return;
+      rafId = requestAnimationFrame(easingLoop);
+
+      var currentYaw   = viewer.getYaw();
+      var currentPitch = viewer.getPitch();
+
+      // Interpolate current → target
+      var newYaw   = currentYaw   + (targetYaw   - currentYaw)   * EASE;
+      var newPitch = currentPitch + (targetPitch - currentPitch) * EASE;
+
+      // Only call setYaw/setPitch if movement is meaningful
+      // (avoids pointless redraws when already at target)
+      if (Math.abs(newYaw - currentYaw) > 0.005 ||
+          Math.abs(newPitch - currentPitch) > 0.005) {
+        viewer.setYaw(newYaw, false);
+        viewer.setPitch(newPitch, false);
       }
     }
 
-    function applyGyro() {
-      gyroRAF = null;
-      if (!gyroActive || pendingYaw === null) return;
-      viewer.setYaw(pendingYaw, false);
-      viewer.setPitch(pendingPitch, false);
-      pendingYaw = null; pendingPitch = null;
-    }
-
+    // ── Start / Stop ─────────────────────────────────────────────
     function startGyro() {
-      gyroAlpha0 = null; gyroBeta0 = null; gyroGamma0 = null;
-      gyroActive = true;
-      window.addEventListener("deviceorientation", onDeviceOrientation, true);
+      // Reset all state cleanly
+      baseAlpha   = null;
+      baseBeta    = null;
+      smoothYaw   = 0;
+      smoothPitch = 0;
+      targetYaw   = viewer.getYaw();
+      targetPitch = viewer.getPitch();
+      gyroActive  = true;
+
+      window.addEventListener("deviceorientation", onOrientation, true);
+
+      // Start easing loop
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(easingLoop);
+
       if (gyroBtn) {
         gyroBtn.classList.add("gyro-on");
         gyroBtn.title = "Gyroscope ON — tap to disable";
       }
+      setStatus("Gyroscope enabled — move your phone to look around");
+      setTimeout(hideStatus, 2500);
     }
 
     function stopGyro() {
       gyroActive = false;
-      window.removeEventListener("deviceorientation", onDeviceOrientation, true);
-      if (gyroRAF) { cancelAnimationFrame(gyroRAF); gyroRAF = null; }
+      window.removeEventListener("deviceorientation", onOrientation, true);
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+
       if (gyroBtn) {
         gyroBtn.classList.remove("gyro-on");
         gyroBtn.title = "Enable gyroscope";
@@ -153,32 +225,33 @@
 
     function toggleGyro() {
       if (gyroActive) { stopGyro(); return; }
-      // iOS 13+ requires permission request
+
+      // iOS 13+ requires explicit permission
       if (typeof DeviceOrientationEvent !== "undefined" &&
           typeof DeviceOrientationEvent.requestPermission === "function") {
-        DeviceOrientationEvent.requestPermission().then(function (state) {
-          if (state === "granted") { startGyro(); }
-          else { alert("Gyroscope permission denied. Enable it in Settings → Safari → Motion & Orientation Access."); }
-        }).catch(function () { startGyro(); });
+        DeviceOrientationEvent.requestPermission()
+          .then(function (state) {
+            if (state === "granted") { startGyro(); }
+            else { alert("Gyroscope permission denied.\nEnable it in Settings \u2192 Safari \u2192 Motion & Orientation Access."); }
+          })
+          .catch(function () { startGyro(); });
       } else {
-        // Android / older iOS — no permission needed
+        // Android WebView — no permission needed
         startGyro();
       }
     }
 
-    if (gyroBtn) {
-      // Only show button if device has orientation sensor
-      if (window.DeviceOrientationEvent) {
-        gyroBtn.style.display = "flex";
-        gyroBtn.onclick = toggleGyro;
-      }
+    // Show gyro button only if sensor is available
+    if (gyroBtn && window.DeviceOrientationEvent) {
+      gyroBtn.style.display = "flex";
+      gyroBtn.onclick = toggleGyro;
     }
 
-    // Status message
+    // ── Initial status ───────────────────────────────────────────
     setStatus(
       project.scenes.length > 1
         ? "Use hotspots or the bar below to navigate."
-        : "Drag to explore \u2022 Use \u{1F9ED} for gyroscope"
+        : "Drag to explore \u2022 Tap \uD83E\uDDED to use gyroscope"
     );
     setTimeout(hideStatus, 3500);
   });
