@@ -11,16 +11,37 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
   <link rel="stylesheet" href="styles.css">
   <style>
-    /* Viewer topbar overlays the panorama */
     .viewer-topbar {
-      position: fixed; top: 0; left: 0; right: 0;
-      z-index: 100;
-      display: flex; align-items: center;
-      justify-content: space-between;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
       padding: calc(var(--safe-top) + 8px) 14px 10px;
       background: linear-gradient(to bottom, rgba(28,28,28,.92) 60%, transparent);
       backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
       gap: 10px;
+    }
+    /* Gyroscope toggle button */
+    #gyro-btn {
+      position: fixed;
+      bottom: calc(var(--safe-bottom) + 80px);
+      right: 16px;
+      width: 48px; height: 48px;
+      min-height: unset;
+      border-radius: 50%;
+      background: rgba(28,28,28,.88);
+      border: 1px solid var(--gold-border);
+      color: var(--light-dim);
+      font-size: 1.3rem;
+      display: none; /* shown by JS when sensor available */
+      align-items: center; justify-content: center;
+      z-index: 20;
+      box-shadow: 0 4px 12px rgba(0,0,0,.4);
+      transition: background .2s, border-color .2s, color .2s;
+    }
+    #gyro-btn.gyro-on {
+      background: var(--gold);
+      border-color: var(--gold);
+      color: var(--dark);
+      box-shadow: 0 0 12px rgba(200,169,106,.5);
     }
   </style>
 </head>
@@ -35,7 +56,7 @@
     </div>
   </div>
   <div class="nav-actions">
-    <a href="index.html" class="btn-icon" title="Projects" style="color:var(--light-dim)">&#8592;</a>
+    <a href="index.html" class="btn-icon" style="color:var(--light-dim)">&#8592;</a>
     <a id="editor-link" href="editor.html" class="btn-ghost button" style="min-height:38px;padding:0 12px;font-size:.8rem">Edit</a>
   </div>
 </header>
@@ -45,6 +66,9 @@
   <div id="viewer-pano"></div>
   <nav class="scene-nav" id="scene-nav" style="display:none"></nav>
 </div>
+
+<!-- Gyroscope toggle -->
+<button id="gyro-btn" title="Enable gyroscope">&#129517;</button>
 
 <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
 <script src="app.js"></script>

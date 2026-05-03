@@ -50,19 +50,44 @@
         .map(h => hs2cfg(project, h, edMode))
     };
     if (scene.sceneType === "panorama") {
-      // Wide panorama: full 360 horizontal wrap, but DO NOT set vaov.
-      // Pannellum derives vaov from the image's natural aspect ratio automatically.
-      // Forcing vaov=90 causes vertical stretching on non-square images.
-      cfg.haov = 360;
+      // Wide panorama (regular photo, not equirectangular).
+      // haov=360 wraps it horizontally around the full sphere.
+      // vaov is derived from the image aspect ratio: vaov = haov / aspectRatio.
+      // This fills the sphere exactly with no black bars top/bottom.
+      // We store the aspect ratio on the scene when the image is loaded (see editor.js).
+      // Fallback to 4:1 (a common wide panorama ratio) if not yet measured.
+      var aspect = scene.aspectRatio || 4;
+      var haov = 360;
+      var vaov = haov / aspect;
+      // Cap vaov so it never exceeds 180 (full sphere vertical)
+      if (vaov > 150) vaov = 150;
+      cfg.haov = haov;
+      cfg.vaov = vaov;
       cfg.pitch = 0;
       cfg.yaw = 0;
-      cfg.hfov = 100;
-      cfg.minHfov = 50;
+      // Initial hfov: show roughly 90deg of the panorama width
+      cfg.hfov = 90;
+      cfg.minHfov = 40;
       cfg.maxHfov = 120;
-      cfg.minPitch = -60;
-      cfg.maxPitch = 60;
+      // Clamp vertical pan to the actual image area (half of vaov)
+      var halfV = vaov / 2;
+      cfg.minPitch = -(halfV - 2);
+      cfg.maxPitch = (halfV - 2);
     }
     return cfg;
+  }
+
+  // Called after image loads to store aspect ratio on scene
+  function measureAndSaveAspect(scene, project, imgSrc) {
+    var img = new Image();
+    img.onload = function() {
+      var ratio = img.naturalWidth / img.naturalHeight;
+      if (ratio > 0 && ratio !== scene.aspectRatio) {
+        scene.aspectRatio = ratio;
+        saveProject(project);
+      }
+    };
+    img.src = imgSrc;
   }
 
   function exportProject(projId) {
@@ -82,7 +107,7 @@
   window.Glory360 = {
     uid, saveImg, getImg, delImg, resolveUrl,
     getProjects, saveProjects, getProject, saveProject, createProject, deleteProject,
-    getQueryParam, hs2cfg, panoConfig, exportProject
+    getQueryParam, hs2cfg, panoConfig, measureAndSaveAspect, exportProject
   };
 
   // ── Index page ──

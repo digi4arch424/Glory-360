@@ -77,6 +77,10 @@
     if (pendingImg) G.saveImg(scene.id, pendingImg);
     project.scenes.push(scene);
     selSceneId = scene.id; hsMode = false; pendingImg = null;
+    // Measure aspect ratio now so vaov is correct immediately
+    if (selType === "panorama") {
+      G.measureAndSaveAspect(scene, project, src);
+    }
     project = G.saveProject(project);
     document.getElementById("scene-name").value = "";
     document.getElementById("scene-url").value = "";
