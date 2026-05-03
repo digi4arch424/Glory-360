@@ -98,6 +98,23 @@
     var DEAD_YAW   = 0.18;   // Layer 2: yaw dead zone in degrees
     var DEAD_PITCH = 0.12;   // Layer 2: pitch dead zone in degrees
     var EASE       = 0.18;   // Layer 3: easing per rAF frame (0=no movement, 1=instant)
+    var SPIKE_MAX  = 8.0;    // Layer 4: max degrees per event — spikes above this are dropped
+
+    // ── Helpers ──────────────────────────────────────────────────
+    // Normalise any angle delta to the shortest path: -180..180
+    function shortestDelta(a, b) {
+      var d = a - b;
+      while (d >  180) d -= 360;
+      while (d < -180) d += 360;
+      return d;
+    }
+
+    // Wrap a raw compass value to 0..360
+    function wrapAlpha(a) {
+      a = a % 360;
+      if (a < 0) a += 360;
+      return a;
+    }
 
     // ── State ────────────────────────────────────────────────────
     var gyroActive = false;
@@ -115,12 +132,12 @@
     var targetYaw   = 0;
     var targetPitch = 0;
 
-    // ── Layer 1+2: sensor input handler ─────────────────────────
+    // ── Layers 1-4: sensor input handler ────────────────────────
     function onOrientation(e) {
       if (!gyroActive) return;
 
-      var alpha = e.alpha != null ? e.alpha : 0;
-      var beta  = e.beta  != null ? e.beta  : 0;
+      var alpha = e.alpha != null ? wrapAlpha(e.alpha) : 0;
+      var beta  = e.beta  != null ? e.beta              : 0;
 
       // Capture baseline on first valid reading
       if (baseAlpha === null) {
@@ -133,35 +150,38 @@
         return;
       }
 
-      // Raw deltas from baseline
-      var dAlpha = alpha - baseAlpha;
-      var dBeta  = beta  - baseBeta;
+      // Raw deltas — always use shortestDelta so 359->1 = +2, not -358
+      // This is the core gimbal-lock fix: the 0/360 boundary is now seamless
+      var dAlpha = shortestDelta(alpha, baseAlpha);
+      var dBeta  = shortestDelta(beta,  baseBeta);
 
-      // Normalise yaw delta to -180..180 range
-      if (dAlpha >  180) dAlpha -= 360;
-      if (dAlpha < -180) dAlpha += 360;
+      // LAYER 4 — Spike clamp
+      // Drop any reading where the delta exceeds SPIKE_MAX degrees.
+      // This catches sensor discontinuities that survive shortestDelta
+      // (e.g. magnetometer flip near 180deg mark on software-fused gyros).
+      if (Math.abs(dAlpha) > SPIKE_MAX || Math.abs(dBeta) > SPIKE_MAX) {
+        // Silently advance baseline without applying movement
+        baseAlpha = alpha;
+        baseBeta  = beta;
+        return;
+      }
 
       // LAYER 1 — Exponential moving average (low-pass filter)
-      // New smoothed value = alpha * rawDelta + (1-alpha) * previousSmoothed
-      smoothYaw   = EMA_ALPHA * dAlpha   + (1 - EMA_ALPHA) * smoothYaw;
-      smoothPitch = EMA_ALPHA * dBeta    + (1 - EMA_ALPHA) * smoothPitch;
+      smoothYaw   = EMA_ALPHA * dAlpha + (1 - EMA_ALPHA) * smoothYaw;
+      smoothPitch = EMA_ALPHA * dBeta  + (1 - EMA_ALPHA) * smoothPitch;
 
       // LAYER 2 — Dead zone: ignore sub-threshold noise
-      var applyYaw   = Math.abs(smoothYaw)   > DEAD_YAW;
-      var applyPitch = Math.abs(smoothPitch) > DEAD_PITCH;
-
-      if (applyYaw) {
+      if (Math.abs(smoothYaw) > DEAD_YAW) {
         targetYaw = targetYaw - smoothYaw * 0.9;
       }
-      if (applyPitch) {
+      if (Math.abs(smoothPitch) > DEAD_PITCH) {
         targetPitch = targetPitch + smoothPitch * 0.6;
       }
 
       // Clamp pitch to safe range
       targetPitch = Math.max(-85, Math.min(85, targetPitch));
 
-      // Advance baseline incrementally so large fast rotations
-      // don't accumulate unbounded deltas
+      // Advance baseline incrementally
       baseAlpha = alpha;
       baseBeta  = beta;
     }
