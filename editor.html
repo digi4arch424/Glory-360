@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1C1C1C">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Glory360 Editor</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="editor-page">
+
+<!-- Topbar -->
+<header class="topbar" style="min-height:50px;padding-top:calc(var(--safe-top) + 8px);padding-bottom:8px">
+  <div class="logo">
+    <div class="logo-icon">G</div>
+    <div class="logo-text">
+      <div class="eyebrow">Editor</div>
+      <h1 id="project-title">Project</h1>
+    </div>
+  </div>
+  <div class="nav-actions">
+    <a href="index.html" class="btn-icon" title="Projects">&#8592;</a>
+    <button class="btn-icon" id="export-btn" title="Export">&#8681;</button>
+    <a id="viewer-link" href="viewer.html" class="button" style="padding:0 12px;min-height:38px;font-size:.8rem">&#9654;</a>
+  </div>
+</header>
+
+<!-- Panorama + status -->
+<div class="editor-pano-wrap">
+
+  <!-- Desktop sidebar / Mobile drawer — shared element -->
+  <div class="panel-drawer" id="panel-drawer">
+    <div class="drawer-handle"></div>
+    <div class="drawer-inner" id="drawer-inner">
+
+      <!-- Tab panels (shown/hidden by JS) -->
+      <div id="tab-add" class="tab-panel">
+        <div class="stacked">
+          <div>
+            <label for="scene-name">Scene name</label>
+            <input id="scene-name" type="text" placeholder="e.g. Main hall" autocomplete="off">
+          </div>
+          <div>
+            <label>Image type</label>
+            <div class="type-selector">
+              <label class="type-opt sel" id="opt-sphere">
+                <input type="radio" name="sType" value="sphere" checked>
+                <span style="font-size:1.2rem;display:block;margin-bottom:4px">&#127760;</span>
+                360&deg; Sphere
+              </label>
+              <label class="type-opt" id="opt-pano">
+                <input type="radio" name="sType" value="panorama">
+                <span style="font-size:1.2rem;display:block;margin-bottom:4px">&#128444;</span>
+                Wide Panorama
+              </label>
+            </div>
+          </div>
+          <div>
+            <label>Upload image</label>
+            <div class="upload-area" id="upload-area">
+              <input type="file" id="scene-file" accept="image/*" capture="environment">
+              <div style="font-size:1.6rem;color:var(--gold)">&#128247;</div>
+              <div style="font-size:.84rem;color:var(--light-dim);margin-top:4px">Tap to upload from camera or gallery</div>
+              <div class="upload-hint">JPG, PNG, WebP &mdash; equirectangular for 360&deg;</div>
+              <div class="upload-fn" id="upload-fn" style="display:none"></div>
+            </div>
+            <div id="img-preview" class="preview-wrap" style="display:none">
+              <img id="preview-img" src="" alt="">
+              <button class="preview-clear" id="clear-img">&#10005;</button>
+            </div>
+          </div>
+          <div class="divider"><span>or URL</span></div>
+          <div>
+            <label for="scene-url">Paste image URL</label>
+            <input id="scene-url" type="url" placeholder="https://&hellip;/panorama.jpg">
+          </div>
+          <button id="add-scene-btn" style="min-height:50px;font-size:.9rem">+ Add Scene</button>
+        </div>
+      </div>
+
+      <div id="tab-scenes" class="tab-panel" style="display:none">
+        <div class="section-heading">
+          <h2>Scenes</h2>
+          <span id="scene-count" class="badge">0</span>
+        </div>
+        <div id="scene-list" class="scene-list stacked"></div>
+      </div>
+
+      <div id="tab-hotspot" class="tab-panel" style="display:none">
+        <h2>Hotspot</h2>
+        <div class="stacked">
+          <div>
+            <label for="target-scene">Link to scene</label>
+            <select id="target-scene"></select>
+          </div>
+          <button id="add-hs-btn" disabled style="min-height:50px">+ Add Hotspot by Click</button>
+        </div>
+        <div id="hs-list" class="stacked" style="margin-top:12px"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Drawer backdrop -->
+  <div class="drawer-backdrop" id="drawer-backdrop"></div>
+
+  <!-- Status + panorama -->
+  <div style="display:flex;flex-direction:column;flex:1;min-width:0;min-height:0">
+    <div class="status-bar" id="ed-status">Select or add a scene to begin.</div>
+    <div class="panorama-box empty" id="ed-pano" style="flex:1;min-height:0;border-radius:0;border:none">
+      <span class="pano-empty-icon">&#127760;</span>
+      <span style="font-size:.85rem">Add a scene to start editing</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Tab bar (mobile only) -->
+<nav class="tab-bar" id="tab-bar">
+  <button class="tab-btn active" data-tab="add" onclick="switchTab('add',this)">
+    <span class="tab-icon">&#10133;</span>Add
+  </button>
+  <button class="tab-btn" data-tab="scenes" onclick="switchTab('scenes',this)">
+    <span class="tab-icon">&#127760;</span>Scenes
+  </button>
+  <button class="tab-btn" data-tab="hotspot" onclick="switchTab('hotspot',this)">
+    <span class="tab-icon">&#128205;</span>Hotspot
+  </button>
+</nav>
+
+<script>
+// Tab switching (mobile drawer)
+var _activeTab = 'add';
+function switchTab(name, btn) {
+  var drawer = document.getElementById('panel-drawer');
+  var backdrop = document.getElementById('drawer-backdrop');
+  var isOpen = drawer.classList.contains('open');
+  var isSame = _activeTab === name;
+  // Toggle drawer if same tab tapped, or open if different
+  if (isOpen && isSame) {
+    drawer.classList.remove('open');
+    backdrop.classList.remove('show');
+  } else {
+    _activeTab = name;
+    ['add','scenes','hotspot'].forEach(function(t){
+      document.getElementById('tab-'+t).style.display = t===name?'block':'none';
+    });
+    document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    drawer.classList.add('open');
+    backdrop.classList.add('show');
+  }
+}
+document.getElementById('drawer-backdrop').onclick = function() {
+  document.getElementById('panel-drawer').classList.remove('open');
+  document.getElementById('drawer-backdrop').classList.remove('show');
+};
+// On desktop, show all tab panels
+if (window.innerWidth >= 768) {
+  ['add','scenes','hotspot'].forEach(function(t){ document.getElementById('tab-'+t).style.display='block'; });
+}
+window.addEventListener('resize', function() {
+  if (window.innerWidth >= 768) {
+    ['add','scenes','hotspot'].forEach(function(t){ document.getElementById('tab-'+t).style.display='block'; });
+  }
+});
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+<script src="app.js"></script>
+<script src="editor.js"></script>
+</body>
+</html>

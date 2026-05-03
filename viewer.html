@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1C1C1C">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Glory360 Viewer</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* Viewer topbar overlays the panorama */
+    .viewer-topbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: calc(var(--safe-top) + 8px) 14px 10px;
+      background: linear-gradient(to bottom, rgba(28,28,28,.92) 60%, transparent);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      gap: 10px;
+    }
+  </style>
+</head>
+<body class="viewer-page">
+
+<header class="viewer-topbar">
+  <div class="logo">
+    <div class="logo-icon">G</div>
+    <div class="logo-text">
+      <div class="eyebrow">Glory360</div>
+      <h1 id="viewer-title" style="font-size:1rem">Tour</h1>
+    </div>
+  </div>
+  <div class="nav-actions">
+    <a href="index.html" class="btn-icon" title="Projects" style="color:var(--light-dim)">&#8592;</a>
+    <a id="editor-link" href="editor.html" class="btn-ghost button" style="min-height:38px;padding:0 12px;font-size:.8rem">Edit</a>
+  </div>
+</header>
+
+<div class="viewer-shell">
+  <div class="viewer-overlay" id="viewer-status">Loading&hellip;</div>
+  <div id="viewer-pano"></div>
+  <nav class="scene-nav" id="scene-nav" style="display:none"></nav>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+<script src="app.js"></script>
+<script src="viewer.js"></script>
+</body>
+</html>
