@@ -98,7 +98,9 @@
     var DEAD_YAW   = 0.18;   // Layer 2: yaw dead zone in degrees
     var DEAD_PITCH = 0.12;   // Layer 2: pitch dead zone in degrees
     var EASE       = 0.18;   // Layer 3: easing per rAF frame (0=no movement, 1=instant)
-    var SPIKE_MAX  = 8.0;    // Layer 4: max degrees per event — spikes above this are dropped
+    var SPIKE_MAX    = 8.0;  // Layer 4: max degrees per event — spikes above this are dropped
+    var SEAM_ZONE    = 20;   // Layer 5: degrees either side of 0/360 seam that are frozen
+    var SEAM_FREEZE  = 8;    // Layer 5: consecutive frozen readings before EMA is also reset
 
     // ── Helpers ──────────────────────────────────────────────────
     // Normalise any angle delta to the shortest path: -180..180
@@ -116,9 +118,15 @@
       return a;
     }
 
+    // Returns true if alpha is within SEAM_ZONE degrees of the 0/360 boundary
+    function nearSeam(a) {
+      return a < SEAM_ZONE || a > (360 - SEAM_ZONE);
+    }
+
     // ── State ────────────────────────────────────────────────────
-    var gyroActive = false;
-    var rafId      = null;
+    var gyroActive   = false;
+    var rafId        = null;
+    var seamFreezeCount = 0;  // counts consecutive readings inside seam zone
 
     // Raw sensor baseline (set on first reading after enable)
     var baseAlpha = null;
@@ -132,7 +140,7 @@
     var targetYaw   = 0;
     var targetPitch = 0;
 
-    // ── Layers 1-4: sensor input handler ────────────────────────
+    // ── Layers 1-5: sensor input handler ────────────────────────
     function onOrientation(e) {
       if (!gyroActive) return;
 
@@ -141,26 +149,46 @@
 
       // Capture baseline on first valid reading
       if (baseAlpha === null) {
-        baseAlpha   = alpha;
-        baseBeta    = beta;
-        targetYaw   = viewer.getYaw();
-        targetPitch = viewer.getPitch();
-        smoothYaw   = 0;
-        smoothPitch = 0;
+        baseAlpha        = alpha;
+        baseBeta         = beta;
+        targetYaw        = viewer.getYaw();
+        targetPitch      = viewer.getPitch();
+        smoothYaw        = 0;
+        smoothPitch      = 0;
+        seamFreezeCount  = 0;
         return;
       }
 
+      // LAYER 5 — Seam freeze
+      // The 0/360 boundary on software-fused gyros (MTK G25) is an unstable
+      // zone. When alpha enters this region the magnetometer flips sign,
+      // causing sustained oscillation that the EMA filter rings on indefinitely.
+      // Fix: freeze ALL output while inside the seam zone. After SEAM_FREEZE
+      // consecutive frozen readings also reset the EMA accumulators so that
+      // when the user exits the zone the filter starts clean with no ringing.
+      if (nearSeam(alpha)) {
+        seamFreezeCount++;
+        // Advance baseline silently so we don't accumulate a huge delta
+        // that fires the moment the user exits the zone
+        baseAlpha = alpha;
+        baseBeta  = beta;
+        // After enough frozen frames, drain the EMA so it can't ring on exit
+        if (seamFreezeCount >= SEAM_FREEZE) {
+          smoothYaw   = 0;
+          smoothPitch = 0;
+        }
+        return; // No panorama movement while inside seam zone
+      }
+      // Exiting seam zone — reset freeze counter
+      seamFreezeCount = 0;
+
       // Raw deltas — always use shortestDelta so 359->1 = +2, not -358
-      // This is the core gimbal-lock fix: the 0/360 boundary is now seamless
       var dAlpha = shortestDelta(alpha, baseAlpha);
       var dBeta  = shortestDelta(beta,  baseBeta);
 
       // LAYER 4 — Spike clamp
-      // Drop any reading where the delta exceeds SPIKE_MAX degrees.
-      // This catches sensor discontinuities that survive shortestDelta
-      // (e.g. magnetometer flip near 180deg mark on software-fused gyros).
+      // Drop any single reading with delta above SPIKE_MAX.
       if (Math.abs(dAlpha) > SPIKE_MAX || Math.abs(dBeta) > SPIKE_MAX) {
-        // Silently advance baseline without applying movement
         baseAlpha = alpha;
         baseBeta  = beta;
         return;
