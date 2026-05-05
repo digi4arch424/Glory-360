@@ -496,3 +496,30 @@ label {
   .page-content { padding: 24px 24px 60px; }
   .project-actions .button, .project-actions button { flex: 0 0 auto; }
 }
+
+/* ── Hide Pannellum built-in UI elements ── */
+
+/* Loading box — black overlay with progress bar */
+.pnlm-load-box {
+  display: none !important;
+}
+
+/* Loading progress bar container */
+.pnlm-lbar {
+  display: none !important;
+}
+
+/* Scene title label bottom-left */
+.pnlm-title-box {
+  display: none !important;
+}
+
+/* Author label if present */
+.pnlm-author-box {
+  display: none !important;
+}
+
+/* Pannellum default About / info controls we don't need */
+.pnlm-about-msg {
+  display: none !important;
+}
