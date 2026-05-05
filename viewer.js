@@ -98,9 +98,9 @@
     var DEAD_YAW   = 0.18;   // Layer 2: yaw dead zone in degrees
     var DEAD_PITCH = 0.12;   // Layer 2: pitch dead zone in degrees
     var EASE       = 0.18;   // Layer 3: easing per rAF frame (0=no movement, 1=instant)
-    var SPIKE_MAX    = 8.0;  // Layer 4: max degrees per event — spikes above this are dropped
-    var SEAM_ZONE    = 20;   // Layer 5: degrees either side of 0/360 seam that are frozen
-    var SEAM_FREEZE  = 8;    // Layer 5: consecutive frozen readings before EMA is also reset
+    var SPIKE_MAX    = 5.0;  // Layer 4: tightened to catch smaller fusion spikes
+    var SEAM_ZONE    = 45;   // Layer 5: 45deg either side of 0/360 — covers both CW and CCW approach
+    var SEAM_FREEZE  = 2;    // Layer 5: drain EMA after just 2 frozen readings (faster reset)
 
     // ── Helpers ──────────────────────────────────────────────────
     // Normalise any angle delta to the shortest path: -180..180
@@ -118,9 +118,20 @@
       return a;
     }
 
-    // Returns true if alpha is within SEAM_ZONE degrees of the 0/360 boundary
+    // Returns true if alpha is within SEAM_ZONE degrees of the 0/360 boundary.
+    // Zone is symmetric — same width for both CW (approaching from 315+)
+    // and CCW (leaving toward 0-45) rotation directions.
     function nearSeam(a) {
       return a < SEAM_ZONE || a > (360 - SEAM_ZONE);
+    }
+
+    // Hard-flush all smoothing state — called on seam exit so filter starts clean
+    function flushSmoothing() {
+      smoothYaw   = 0;
+      smoothPitch = 0;
+      // Also reset target to current viewer position so no stored movement fires
+      targetYaw   = viewer.getYaw();
+      targetPitch = viewer.getPitch();
     }
 
     // ── State ────────────────────────────────────────────────────
@@ -172,14 +183,19 @@
         // that fires the moment the user exits the zone
         baseAlpha = alpha;
         baseBeta  = beta;
-        // After enough frozen frames, drain the EMA so it can't ring on exit
+        // Drain EMA every frame inside seam zone after SEAM_FREEZE readings
+        // so smoothing state is always zeroed well before we exit
         if (seamFreezeCount >= SEAM_FREEZE) {
-          smoothYaw   = 0;
-          smoothPitch = 0;
+          smoothYaw   *= 0.3;  // fast exponential drain toward 0
+          smoothPitch *= 0.3;
         }
         return; // No panorama movement while inside seam zone
       }
-      // Exiting seam zone — reset freeze counter
+      // Exiting seam zone — always flush EMA and reset target
+      // This guarantees zero residual ringing regardless of how long we were frozen
+      if (seamFreezeCount > 0) {
+        flushSmoothing();
+      }
       seamFreezeCount = 0;
 
       // Raw deltas — always use shortestDelta so 359->1 = +2, not -358
