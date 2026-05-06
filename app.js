@@ -201,8 +201,7 @@
     var proj = getProject(projId);
     if (!proj) { alert("Project not found."); return; }
 
-    // Gather all scene image promises
-    var sceneIds  = proj.scenes.map(function (s) { return s.id; });
+    var sceneIds    = proj.scenes.map(function (s) { return s.id; });
     var imgPromises = sceneIds.map(function (id) { return getImg(id); });
 
     Promise.all(imgPromises).then(function (images) {
@@ -210,14 +209,44 @@
       sceneIds.forEach(function (id, i) {
         if (images[i]) bundle.images[id] = images[i];
       });
-      var json = JSON.stringify(bundle);
-      var blob = new Blob([json], { type: "application/json" });
-      var url  = URL.createObjectURL(blob);
-      var a    = document.createElement("a");
-      a.href   = url;
-      a.download = (proj.name.replace(/[^a-z0-9]/gi, "_") || "project") + ".glory360";
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+
+      var filename = (proj.name.replace(/[^a-z0-9]/gi, "_") || "project") + ".glory360";
+      var json     = JSON.stringify(bundle);
+
+      // ── Android APK WebView bridge ───────────────────────────
+      // If the Java download bridge is available (injected by MainActivity),
+      // use it to write directly to the Downloads folder on the device.
+      if (window.AndroidBridge && typeof window.AndroidBridge.saveFile === "function") {
+        try {
+          window.AndroidBridge.saveFile(filename, json);
+          return;
+        } catch (e) {
+          console.warn("AndroidBridge.saveFile failed, falling back:", e);
+        }
+      }
+
+      // ── Chrome / browser fallback — base64 data URI ──────────
+      // URL.createObjectURL is unreliable in WebView sandboxes.
+      // data: URI with base64 content works in Chrome and most browsers.
+      try {
+        var b64  = btoa(unescape(encodeURIComponent(json)));
+        var uri  = "data:application/octet-stream;base64," + b64;
+        var a    = document.createElement("a");
+        a.href   = uri;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (e) {
+        // Last resort — open as text in a new tab so user can save manually
+        var w = window.open("", "_blank");
+        if (w) {
+          w.document.write("<pre style='word-break:break-all;font-size:11px'>" + json + "</pre>");
+          w.document.title = filename;
+        } else {
+          alert("Download failed. Please enable pop-ups or check Downloads folder.");
+        }
+      }
     }).catch(function (err) {
       alert("Export failed: " + err.message);
     });
